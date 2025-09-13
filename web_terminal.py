@@ -1,24 +1,29 @@
-from flask import Flask, request, jsonify
+import os
 import subprocess
+from flask import Flask, request, jsonify
 
 app = Flask(__name__)
-SECRET_TOKEN = "my_super_secret_token"  # change this to something strong
 
-@app.route("/cmd", methods=["POST"])
-def run_cmd():
-    token = request.headers.get("X-SECRET-TOKEN")
+# Replace this with a strong secret token
+SECRET_TOKEN = os.environ.get("SECRET_TOKEN", "supersecret")
+
+@app.route("/")
+def index():
+    return "Web terminal is live! Use /run to execute commands."
+
+@app.route("/run", methods=["POST"])
+def run_command():
+    token = request.headers.get("Authorization")
     if token != SECRET_TOKEN:
         return jsonify({"error": "Invalid token"}), 403
 
     data = request.json
-    if not data or 'command' not in data:
+    if not data or "command" not in data:
         return jsonify({"error": "No command provided"}), 400
 
-    command = data['command']
+    command = data["command"]
     try:
-        result = subprocess.run(
-            command, shell=True, capture_output=True, text=True
-        )
+        result = subprocess.run(command, shell=True, capture_output=True, text=True)
         return jsonify({
             "stdout": result.stdout,
             "stderr": result.stderr,
@@ -28,5 +33,6 @@ def run_cmd():
         return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+    port = int(os.environ.get("PORT", 5000))  # Render assigns this automatically
+    app.run(host="0.0.0.0", port=port)
 
