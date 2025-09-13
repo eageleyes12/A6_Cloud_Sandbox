@@ -1,85 +1,83 @@
-# Overwrite web_terminal.py with the recommended code
-cat > ~/A6_Cloud_Sandbox/web_terminal.py <<'PY'
 #!/usr/bin/env python3
 import os
-import shlex
 import subprocess
+import json
 from flask import Flask, request, jsonify, render_template_string
 
 app = Flask(__name__)
 
-# Read secret token from environment (do NOT hardcode)
+# Read secret token from environment
 SECRET_TOKEN = os.environ.get("SECRET_TOKEN")
 
+# Simple web UI (optional)
 HTML_PAGE = """
 <!doctype html>
 <html>
-<head>
-  <meta charset="utf-8">
-  <title>Web Command Executor</title>
-</head>
-<body>
-  <h2>Web Command Executor</h2>
-  <p><strong>Warning:</strong> this page sends commands to be executed on the server. Keep your token secret.</p>
-
-  <label>Secret token:</label><br>
-  <input id="token" style="width: 50%;" placeholder="Enter SECRET_TOKEN"><br><br>
-
-  <label>Command:</label><br>
-  <input id="command" style="width: 80%;" placeholder="ls -la /"><button id="run">Run</button>
-
-  <h3>Result</h3>
-  <pre id="output" style="white-space: pre-wrap; border: 1px solid #ccc; padding: 10px; min-height: 120px;"></pre>
-
-  <script>
-    document.getElementById('run').addEventListener('click', async () => {
-      const token = document.getElementById('token').value.trim();
-      const command = document.getElementById('command').value.trim();
-      if (!token || !command) {
-        alert('Please enter both token and command.');
-        return;
-      }
-      document.getElementById('output').textContent = 'Running...';
-      try {
+  <head><meta charset="utf-8"><title>Web Terminal</title></head>
+  <body>
+    <h1>Web terminal is live!</h1>
+    <p>Use <code>/run</code> POST with JSON <code>{"token":"...","command":"..."}</code></p>
+    <form id="f" method="post" action="/run" style="margin-top:1em">
+      <label>Token: <input name="token" style="width:80%"></label><br><br>
+      <label>Command: <input name="command" style="width:80%" value="ls -la"></label><br><br>
+      <button type="submit">Run</button>
+    </form>
+    <pre id="out"></pre>
+    <script>
+      const form = document.getElementById('f');
+      const out = document.getElementById('out');
+      form.onsubmit = async (e) => {
+        e.preventDefault();
+        const fd = new FormData(form);
+        const body = { token: fd.get('token'), command: fd.get('command') };
         const res = await fetch('/run', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({ token, command })
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(body)
         });
-        const data = await res.json();
-        document.getElementById('output').textContent = JSON.stringify(data, null, 2);
-      } catch (err) {
-        document.getElementById('output').textContent = 'Error: ' + err;
-      }
-    });
-  </script>
-</body>
+        out.textContent = await res.text();
+      };
+    </script>
+  </body>
 </html>
 """
 
 @app.route("/", methods=["GET"])
-def home():
+def index():
     return render_template_string(HTML_PAGE)
 
 @app.route("/run", methods=["POST"])
 def run_command():
-    # Ensure SECRET_TOKEN is configured
-    if not SECRET_TOKEN:
+    # Accept JSON; also handle form submit from UI by converting form-like payloads
+    data = None
+    if request.is_json:
+        data = request.get_json()
+    else:
+        # form POST from the simple UI
+        data = {
+            "token": request.form.get("token"),
+            "command": request.form.get("command")
+        }
+
+    if not data:
+        return jsonify({"error": "Invalid request (no JSON or form data)"}), 400
+
+    token = data.get("token")
+    if SECRET_TOKEN is None:
         return jsonify({"error": "Server misconfigured: SECRET_TOKEN not set"}), 500
 
-    data = request.get_json(force=True, silent=True)
-    if not data or "token" not in data or "command" not in data:
-        return jsonify({"error": "Invalid request: require JSON with 'token' and 'command'"}), 400
-
-    if data["token"] != SECRET_TOKEN:
+    if token != SECRET_TOKEN:
         return jsonify({"error": "Invalid token"}), 403
 
-    command = data["command"]
-    # WARNING: running shell=True will run arbitrary commands. Keep token private.
+    command = data.get("command")
+    if not command:
+        return jsonify({"error": "No command provided"}), 400
+
+    # WARNING: This runs arbitrary shell commands. Keep SECRET_TOKEN secret.
     try:
-        result = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=60)
+        result = subprocess.run(
+            command, shell=True, capture_output=True, text=True, timeout=60
+        )
         return jsonify({
             "stdout": result.stdout,
             "stderr": result.stderr,
@@ -91,9 +89,8 @@ def run_command():
         return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
-    # Render provides PORT env var; otherwise default to 5000
+    # Render provides PORT in environment; fallback to 5000 for local
     port = int(os.environ.get("PORT", 5000))
-    # Bind to 0.0.0.0 for Render / external access
+    # Bind to 0.0.0.0 for external access
     app.run(host="0.0.0.0", port=port)
-PY
 
