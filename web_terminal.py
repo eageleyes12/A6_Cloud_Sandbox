@@ -1,44 +1,30 @@
 #!/usr/bin/env python3
+# web_terminal.py
+# Simple Flask endpoint to run commands (AUTH REQUIRED via SECRET_TOKEN env var)
+# WARNING: This runs shell commands on your machine/server. Keep SECRET_TOKEN secret.
+
 import os
 import subprocess
-import json
 from flask import Flask, request, jsonify, render_template_string
 
 app = Flask(__name__)
 
-# Read secret token from environment
+# Read secret token from environment (Render / system env)
 SECRET_TOKEN = os.environ.get("SECRET_TOKEN")
 
-# Simple web UI (optional)
 HTML_PAGE = """
 <!doctype html>
 <html>
-  <head><meta charset="utf-8"><title>Web Terminal</title></head>
-  <body>
-    <h1>Web terminal is live!</h1>
-    <p>Use <code>/run</code> POST with JSON <code>{"token":"...","command":"..."}</code></p>
-    <form id="f" method="post" action="/run" style="margin-top:1em">
-      <label>Token: <input name="token" style="width:80%"></label><br><br>
-      <label>Command: <input name="command" style="width:80%" value="ls -la"></label><br><br>
-      <button type="submit">Run</button>
-    </form>
-    <pre id="out"></pre>
-    <script>
-      const form = document.getElementById('f');
-      const out = document.getElementById('out');
-      form.onsubmit = async (e) => {
-        e.preventDefault();
-        const fd = new FormData(form);
-        const body = { token: fd.get('token'), command: fd.get('command') };
-        const res = await fetch('/run', {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify(body)
-        });
-        out.textContent = await res.text();
-      };
-    </script>
-  </body>
+<head><meta charset="utf-8"><title>Web terminal</title></head>
+<body>
+  <h1>Web terminal is live!</h1>
+  <p>Use <code>/run</code> to execute commands (POST JSON).</p>
+  <form method="POST" action="/run">
+    <input type="hidden" name="token" value="">
+    <input type="text" name="command" style="width:80%" placeholder="command">
+    <input type="submit" value="Run">
+  </form>
+</body>
 </html>
 """
 
@@ -47,36 +33,35 @@ def index():
     return render_template_string(HTML_PAGE)
 
 @app.route("/run", methods=["POST"])
-def run_command():
-    # Accept JSON; also handle form submit from UI by converting form-like payloads
-    data = None
+def run_cmd():
+    # Token: JSON body "token" field OR header "X-SECRET-TOKEN"
+    token = None
     if request.is_json:
-        data = request.get_json()
-    else:
-        # form POST from the simple UI
-        data = {
-            "token": request.form.get("token"),
-            "command": request.form.get("command")
-        }
+        token = request.json.get("token")
+    if not token:
+        token = request.headers.get("X-SECRET-TOKEN") or request.form.get("token")
 
-    if not data:
-        return jsonify({"error": "Invalid request (no JSON or form data)"}), 400
-
-    token = data.get("token")
-    if SECRET_TOKEN is None:
-        return jsonify({"error": "Server misconfigured: SECRET_TOKEN not set"}), 500
-
-    if token != SECRET_TOKEN:
+    if not SECRET_TOKEN or token != SECRET_TOKEN:
         return jsonify({"error": "Invalid token"}), 403
 
-    command = data.get("command")
-    if not command:
+    # command comes as JSON field "command" or form field "command"
+    cmd = None
+    if request.is_json:
+        cmd = request.json.get("command")
+    if not cmd:
+        cmd = request.form.get("command")
+
+    if not cmd:
         return jsonify({"error": "No command provided"}), 400
 
-    # WARNING: This runs arbitrary shell commands. Keep SECRET_TOKEN secret.
+    # WARNING: shell=True executes arbitrary commands. Keep SECRET_TOKEN secret.
     try:
         result = subprocess.run(
-            command, shell=True, capture_output=True, text=True, timeout=60
+            cmd,
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=60
         )
         return jsonify({
             "stdout": result.stdout,
@@ -89,8 +74,7 @@ def run_command():
         return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
-    # Render provides PORT in environment; fallback to 5000 for local
+    # Render gives a PORT env var. Default to 5000 for local.
     port = int(os.environ.get("PORT", 5000))
-    # Bind to 0.0.0.0 for external access
     app.run(host="0.0.0.0", port=port)
 
