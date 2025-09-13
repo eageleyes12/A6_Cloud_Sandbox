@@ -1,43 +1,31 @@
-
-from flask import Flask, request, render_template_string
+from flask import Flask, request, jsonify
 import subprocess
 
 app = Flask(__name__)
+SECRET_TOKEN = "my_super_secret_token"  # change this to something strong
 
-# Basic HTML page with a command input
-HTML_PAGE = """
-<!DOCTYPE html>
-<html>
-<head>
-    <title>A6 Cloud Terminal</title>
-</head>
-<body>
-    <h1>A6 Cloud Terminal</h1>
-    <form method="POST">
-        <input type="text" name="cmd" style="width: 80%;" autofocus>
-        <input type="submit" value="Run">
-    </form>
-    {% if output %}
-    <h2>Output:</h2>
-    <pre>{{ output }}</pre>
-    {% endif %}
-</body>
-</html>
-"""
+@app.route("/cmd", methods=["POST"])
+def run_cmd():
+    token = request.headers.get("X-SECRET-TOKEN")
+    if token != SECRET_TOKEN:
+        return jsonify({"error": "Invalid token"}), 403
 
-@app.route("/", methods=["GET", "POST"])
-def index():
-    output = None
-    if request.method == "POST":
-        cmd = request.form.get("cmd")
-        try:
-            result = subprocess.run(
-                cmd, shell=True, capture_output=True, text=True
-            )
-            output = result.stdout + result.stderr
-        except Exception as e:
-            output = str(e)
-    return render_template_string(HTML_PAGE, output=output)
+    data = request.json
+    if not data or 'command' not in data:
+        return jsonify({"error": "No command provided"}), 400
+
+    command = data['command']
+    try:
+        result = subprocess.run(
+            command, shell=True, capture_output=True, text=True
+        )
+        return jsonify({
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+            "returncode": result.returncode
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
